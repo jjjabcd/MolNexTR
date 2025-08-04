@@ -194,25 +194,42 @@ class SmilesEvaluator(object):
         results['chiral'] = np.mean(chiral[:, 0] == chiral[:, 1]) if len(chiral) > 0 else -1
         return results
 
+def print_tanimoto_score_directly(scores):
+    print(scores.get('tanimoto', 'N/A'))
 
 if __name__ == "__main__":
     args = get_args()
     gold_df = pd.read_csv(args.gold_file)
     pred_df = pd.read_csv(args.pred_file)
 
-    if len(pred_df) != len(gold_df):
-        print(f"Pred ({len(pred_df)}) and Gold ({len(gold_df)}) have different lengths!")
+    # Rename predicted_smiles column if it exists
+    if 'predicted_smiles' in pred_df.columns:
+        pred_df[args.pred_field] = pred_df['predicted_smiles']
 
+    # Remove .png extension from image_file if present
+    if 'image_file' in pred_df.columns:
+        pred_df['image_file'] = pred_df['image_file'].str.replace('.png', '')
+    
     # Re-order pred_df to have the same order with gold_df
     image2goldidx = {image_id: idx for idx, image_id in enumerate(gold_df['image_id'])}
-    image2predidx = {image_id: idx for idx, image_id in enumerate(pred_df['image_id'])}
+    image2predidx = {image_id: idx for idx, image_id in enumerate(pred_df['image_file'])}
+    
+    # Create missing predictions for images not in pred_df
+    missing_predictions = []
     for image_id in gold_df['image_id']:
-        # If image_id doesn't exist in pred_df, add an empty prediction.
         if image_id not in image2predidx:
-            pred_df = pred_df.append({'image_id': image_id, args.pred_field: ""}, ignore_index=True)
-    image2predidx = {image_id: idx for idx, image_id in enumerate(pred_df['image_id'])}
-    pred_df = pred_df.reindex([image2predidx[image_id] for image_id in gold_df['image_id']])
+            missing_predictions.append({'image_file': image_id, args.pred_field: ""})
+    
+    if missing_predictions:
+        pred_df = pd.concat([pred_df, pd.DataFrame(missing_predictions)], ignore_index=True)
+    
+    # Update indices after adding missing predictions
+    image2predidx = {image_id: idx for idx, image_id in enumerate(pred_df['image_file'])}
+    
+    # Reorder predictions to match gold order
+    pred_indices = [image2predidx[image_id] for image_id in gold_df['image_id']]
+    pred_df = pred_df.iloc[pred_indices].reset_index(drop=True)
 
     evaluator = SmilesEvaluator(gold_df['SMILES'], args.num_workers, args.tanimoto)
     scores = evaluator.evaluate(pred_df[args.pred_field])
-    print(json.dumps(scores, indent=4))
+    print_tanimoto_score_directly(scores)
